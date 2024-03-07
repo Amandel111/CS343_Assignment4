@@ -4,26 +4,27 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/rpc"
 	"os"
 	"strconv"
-	"time"
-	"math/rand"
 	"sync"
+	"time"
 )
 
 //type RaftNode int
 
 type RaftNode struct {
-	mutex    sync.Mutex
-	selfID   int
-	myPort   string
-	currentTerm int
-	peerConnections[] ServerConnection
+	mutex           sync.Mutex
+	selfID          int
+	myPort          string
+	currentTerm     int
+	peerConnections []ServerConnection
 	electionTimeout *time.Timer
-	status string
-	votedFor int
+	status          string
+	votedFor        int
+	voteCount       int
 }
 
 type VoteArguments struct {
@@ -61,15 +62,17 @@ var electionTimeout *time.Timer
 // The RequestVote RPC as defined in Raft
 // Hint 1: Use the description in Figure 2 of the paper
 // Hint 2: Only focus on the details related to leader election and majority votes
-func (*RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) error {
-
+func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) error {
+	fmt.Println("term", arguments.Term)
+	fmt.Println(node.selfID, "recieved a vote request")
+	//node.resetElectionTimeout()
 	return nil
 }
 
 // The AppendEntry RPC as defined in Raft
 // Hint 1: Use the description in Figure 2 of the paper
 // Hint 2: Only focus on the details related to leader election and heartbeats
-func (*RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryReply) error {
+func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryReply) error {
 
 	return nil
 }
@@ -77,11 +80,28 @@ func (*RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryRe
 // You may use this function to help with handling the election time out
 // Hint: It may be helpful to call this method every time the node wants to start an election
 func (node *RaftNode) LeaderElection() {
-	fmt.Println("nominate self as candidate");
-
+	fmt.Println("nominate self as candidate. node:", node.selfID)
 	//increment current term and status
 	node.currentTerm += 1
 	node.status = "candidate"
+	// vote for itself
+	node.voteCount += 1
+	// send election
+	arguments := VoteArguments{
+		Term:        node.currentTerm,
+		CandidateID: node.selfID,
+	}
+	ackReply := "nil"
+	fmt.Println("peer connections", node.peerConnections)
+	for _, peerNode := range node.peerConnections {
+		fmt.Println("requesting from node", peerNode)
+		go func(server ServerConnection) {
+			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &ackReply)
+			if err != nil {
+				return
+			}
+		}(peerNode)
+	}
 }
 
 /*call RequestVote, calcualte the return values to see if majority or true*/
@@ -91,14 +111,13 @@ func (node *RaftNode) LeaderElection() {
 func Heartbeat() {
 }
 
-
-//will initiate a timer for the node passed to it
+// will initiate a timer for the node passed to it
 func StartTimer(node *RaftNode) {
 	//node.mutex.Lock() //dont need to protect because it will be reset every time a node reaches out to it
 	//defer node.mutex.Unlock()
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	tRandom := time.Duration(r.Intn(150)+151) * time.Millisecond
-	node.electionTimeout = time.NewTimer(tRandom) 
+	node.electionTimeout = time.NewTimer(tRandom)
 	fmt.Println("Timer started")
 }
 
@@ -133,10 +152,10 @@ func main() {
 	defer file.Close()
 
 	node := &RaftNode{
-		selfID: myID,
-		mutex: sync.Mutex{},
-		currentTerm = 0,
-		status = "follower",
+		selfID:      myID,
+		mutex:       sync.Mutex{},
+		currentTerm: 0,
+		status:      "follower",
 	}
 
 	myPort := "localhost"
@@ -203,6 +222,7 @@ func main() {
 		// Once connection is finally established
 		// Save that connection information in the servers list
 		serverNodes = append(serverNodes, ServerConnection{index, element, client})
+		//fmt.Println("serverNodes:", serverNodes)
 		// Record that in log
 		fmt.Println("Connected to " + element)
 	}
@@ -217,8 +237,7 @@ func main() {
 	// Heads up: they never will be done!
 	// Hint 4: wg.Wait() might be helpful here
 
-
-	fmt.Println("node: ", node);
+	fmt.Println("node: ", node)
 
 	StartTimer(node)
 
@@ -227,14 +246,14 @@ func main() {
 		<-node.electionTimeout.C
 
 		// Printed when timer is fired
-		fmt.Println("timer inactivated")
-		
+		fmt.Println("timer inactivated for node", node.selfID)
+
 		//if node reaches this point, it starts an election because it has not received a heartbeat
 		node.LeaderElection()
 	}()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	wg.Wait()                // Waits forever, so main process does not stop
+	wg.Wait() // Waits forever, so main process does not stop
 
 }
