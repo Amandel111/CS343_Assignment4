@@ -63,9 +63,16 @@ var electionTimeout *time.Timer
 // Hint 1: Use the description in Figure 2 of the paper
 // Hint 2: Only focus on the details related to leader election and majority votes
 func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) error {
-	fmt.Println("term", arguments.Term)
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+	//if receive rpc from higher term, turn into follower, increment term
+	//fmt.Println("term", arguments.Term)
 	fmt.Println(node.selfID, "recieved a vote request")
-	//node.resetElectionTimeout()
+	node.resetElectionTimeout()
+
+	//test returning different things
+	reply.Term = 6//node.currentTerm
+	reply.ResultVote = true
 	return nil
 }
 
@@ -73,7 +80,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 // Hint 1: Use the description in Figure 2 of the paper
 // Hint 2: Only focus on the details related to leader election and heartbeats
 func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryReply) error {
-
+//check if currently a candidate, if so and if you just received a valid heartbeat, return to follower state
 	return nil
 }
 
@@ -91,16 +98,20 @@ func (node *RaftNode) LeaderElection() {
 		Term:        node.currentTerm,
 		CandidateID: node.selfID,
 	}
-	ackReply := "nil"
-	fmt.Println("peer connections", node.peerConnections)
+	var reply VoteReply
+	//fmt.Println("peer connections ", node.peerConnections, " for node ", node.selfID)
 	for _, peerNode := range node.peerConnections {
 		fmt.Println("requesting from node", peerNode)
 		go func(server ServerConnection) {
-			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &ackReply)
+			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
 			if err != nil {
 				return
+			}else{
+				//retry
 			}
 		}(peerNode)
+		fmt.Printf("candidate ", node.selfID, " gets response: ", reply); //this should be printing out (6, True) but it is just printing out empty struct
+		//store output in a result, term# variables. If term>node.currentTerm, revert to a follower. If result, increment votes.
 	}
 }
 
@@ -118,13 +129,14 @@ func StartTimer(node *RaftNode) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	tRandom := time.Duration(r.Intn(150)+151) * time.Millisecond
 	node.electionTimeout = time.NewTimer(tRandom)
-	fmt.Println("Timer started")
+	//fmt.Println("Timer started")
 }
 
 // resetElectionTimeout resets the election timeout to a new random duration.
 // This function should be called whenever an event occurs that prevents the need for a new election,
 // such as receiving a heartbeat from the leader or granting a vote to a candidate.
 func (node *RaftNode) resetElectionTimeout() {
+	fmt.Println("node ", node, " reset its timer")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	duration := time.Duration(r.Intn(150)+151) * time.Millisecond
 	node.electionTimeout.Stop()          // Use Reset method only on stopped or expired timers
@@ -184,14 +196,15 @@ func main() {
 	}
 
 	// Following lines are to register the RPCs of this object of type RaftNode
-	api := new(RaftNode)
-	err = rpc.Register(api)
+	//api := new(RaftNode)
+	//err = rpc.Register(api)
+	err = rpc.Register(node)
 	if err != nil {
 		log.Fatal("error registering the RPCs", err)
 	}
 	rpc.HandleHTTP()
-	go http.ListenAndServe(myPort, nil)
-	log.Printf("serving rpc on port" + myPort)
+	go http.ListenAndServe(node.myPort, nil)
+	log.Printf("serving rpc on port" + node.myPort)
 
 	// This is a workaround to slow things down until all servers are up and running
 	// Idea: wait for user input to indicate that all servers are ready for connections
