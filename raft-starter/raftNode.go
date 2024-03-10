@@ -98,19 +98,20 @@ func (node *RaftNode) LeaderElection() {
 		Term:        node.currentTerm,
 		CandidateID: node.selfID,
 	}
-	var reply VoteReply
 	//fmt.Println("peer connections ", node.peerConnections, " for node ", node.selfID)
 	for _, peerNode := range node.peerConnections {
 		fmt.Println("requesting from node", peerNode)
 		go func(server ServerConnection) {
+			var reply VoteReply
 			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
 			if err != nil {
 				return
 			}else{
 				//retry
 			}
+			fmt.Printf("candidate ", node.selfID, " gets response: ", reply);
 		}(peerNode)
-		fmt.Printf("candidate ", node.selfID, " gets response: ", reply); //this should be printing out (6, True) but it is just printing out empty struct
+		// fmt.Printf("candidate ", node.selfID, " gets response: ", reply); //this should be printing out (6, True) but it is just printing out empty struct
 		//store output in a result, term# variables. If term>node.currentTerm, revert to a follower. If result, increment votes.
 	}
 }
