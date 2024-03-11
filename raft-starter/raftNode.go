@@ -58,10 +58,11 @@ var serverNodes []ServerConnection
 var currentTerm int
 var votedFor int
 var electionTimeout *time.Timer
+const NUM_NODES = 5
 
 // The RequestVote RPC as defined in Raft
 // Hint 1: Use the description in Figure 2 of the paper
-// Hint 2: Only focus on the details related to leader election and majority votes
+//Hint 2: Only focus on the details related to leader election and majority votes
 func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
@@ -71,7 +72,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 	node.resetElectionTimeout()
 
 	//test returning different things
-	reply.Term = 6//node.currentTerm
+	reply.Term = node.currentTerm
 	reply.ResultVote = true
 	return nil
 }
@@ -98,10 +99,18 @@ func (node *RaftNode) LeaderElection() {
 		Term:        node.currentTerm,
 		CandidateID: node.selfID,
 	}
+
+	//wait groups
+	var waitgroup sync.WaitGroup
+
+	//potential term number to update our candidate node if it is behind
+	updateTerm := node.currentTerm
 	//fmt.Println("peer connections ", node.peerConnections, " for node ", node.selfID)
 	for _, peerNode := range node.peerConnections {
 		fmt.Println("requesting from node", peerNode)
+		waitgroup.Add(1)
 		go func(server ServerConnection) {
+			defer waitgroup.Done()
 			var reply VoteReply
 			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
 			if err != nil {
@@ -109,12 +118,41 @@ func (node *RaftNode) LeaderElection() {
 			}else{
 				//retry
 			}
-			fmt.Printf("candidate ", node.selfID, " gets response: ", reply);
+			//fmt.Println("candidate ", node.selfID, " gets response: ", reply);
+			if (reply.ResultVote){
+				fmt.Print("node votes yes")
+				node.voteCount += 1
+			}else{
+				if (reply.Term > updateTerm){
+					updateTerm = reply.Term
+				}
+			}
 		}(peerNode)
-		// fmt.Printf("candidate ", node.selfID, " gets response: ", reply); //this should be printing out (6, True) but it is just printing out empty struct
-		//store output in a result, term# variables. If term>node.currentTerm, revert to a follower. If result, increment votes.
 	}
+	waitgroup.Wait()
+
+	//update node term, updateTerm will be node.currentTerm unless node.currentTerm is out of date
+	node.currentTerm = updateTerm
+
+	//fmt.Println("float: ",float64(node.voteCount)/float64(NUM_NODES))
+	if (float64(node.voteCount)/float64(NUM_NODES) > 0.5){
+		fmt.Println("confirmed leader");
+	}else{
+		//fmt.Println("node status: ", node.status);
+		node.status = "follower"
+		node.currentTerm = reply.currentTerm 
+	}
+
+
 }
+
+/*
+leaderElection: once a candidate is turned into a leader, change its status. create a heartbeat timer, send heartbeats
+request vote: compare terms, update voting node term, return 
+heartbeat: figure out what to do with this, create a heartbeat timer
+append entries: call these for heartbeats. If a candidate receives one, turn it into a follower. Reset timer for all nodes.
+test with failures by making noes go to sleep randomly
+*/
 
 /*call RequestVote, calcualte the return values to see if majority or true*/
 
@@ -263,7 +301,7 @@ func main() {
 		fmt.Println("timer inactivated for node", node.selfID)
 
 		//if node reaches this point, it starts an election because it has not received a heartbeat
-		node.LeaderElection()
+	    node.LeaderElection()
 	}()
 
 	var wg sync.WaitGroup
