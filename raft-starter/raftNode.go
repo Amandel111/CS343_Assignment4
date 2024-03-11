@@ -71,7 +71,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 	node.resetElectionTimeout() //do we do this before or after we compare terms
 	// question: ask about nil vs. candidate id in the if statement- when would it be candidate id?
 	// question: how to do a check for null?
-	if (arguments.Term > node.currentTerm /*&& &node.votedFor == nil*/){ //reset votedFor at beginning of terms
+	if (arguments.Term >= node.currentTerm /*&& &node.votedFor == nil*/){ //reset votedFor at beginning of terms
 		//candidate has valid term numver, approve vote
 		reply.ResultVote = true
 		node.votedFor = arguments.CandidateID
