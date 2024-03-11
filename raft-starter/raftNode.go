@@ -66,14 +66,27 @@ const NUM_NODES = 5
 func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
-	//if receive rpc from higher term, turn into follower, increment term
-	//fmt.Println("term", arguments.Term)
-	fmt.Println(node.selfID, "recieved a vote request")
-	node.resetElectionTimeout()
 
-	//test returning different things
+	//fmt.Println(node.selfID, "recieved a vote request")
+	node.resetElectionTimeout() //do we do this before or after we compare terms
+	// question: ask about nil vs. candidate id in the if statement- when would it be candidate id?
+	// question: how to do a check for null?
+	if (arguments.Term > node.currentTerm /*&& &node.votedFor == nil*/){ //reset votedFor at beginning of terms
+		//candidate has valid term numver, approve vote
+		reply.ResultVote = true
+		node.votedFor = arguments.CandidateID
+
+	}else{ //ask christine if less than or equal to or just less than
+		//candidate has equal to or smaller term number, invalid
+		reply.ResultVote = false
+	}
+
+	//increment node term
+	node.currentTerm += 1
 	reply.Term = node.currentTerm
-	reply.ResultVote = true
+
+
+	fmt.Println("node ", node.selfID, " votes for node ", node.votedFor)
 	return nil
 }
 
@@ -81,8 +94,19 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 // Hint 1: Use the description in Figure 2 of the paper
 // Hint 2: Only focus on the details related to leader election and heartbeats
 func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryReply) error {
-//check if currently a candidate, if so and if you just received a valid heartbeat, return to follower state
+	//check if currently a candidate, if so and if you just received a valid heartbeat, return to follower state
+	
+	//fmt.Println("append entries has been called");
+
+	//determine what needs to be done before and after we call timer, this position is temporary
+	node.resetElectionTimeout() //do we do this before or after we compare terms
+	reply.Term = node.currentTerm
+	//change success to be false if leader term < node.currentTerm
+	reply.Success = true
 	return nil
+
+
+	//if receive rpc from higher term, turn into follower, increment term
 }
 
 // You may use this function to help with handling the election time out
@@ -92,8 +116,11 @@ func (node *RaftNode) LeaderElection() {
 	//increment current term and status
 	node.currentTerm += 1
 	node.status = "candidate"
+	
 	// vote for itself
 	node.voteCount += 1
+	node.votedFor = node.selfID
+
 	// send election
 	arguments := VoteArguments{
 		Term:        node.currentTerm,
@@ -107,7 +134,7 @@ func (node *RaftNode) LeaderElection() {
 	updateTerm := node.currentTerm
 	//fmt.Println("peer connections ", node.peerConnections, " for node ", node.selfID)
 	for _, peerNode := range node.peerConnections {
-		fmt.Println("requesting from node", peerNode)
+		//fmt.Println("requesting from node", peerNode)
 		waitgroup.Add(1)
 		go func(server ServerConnection) {
 			defer waitgroup.Done()
@@ -120,7 +147,7 @@ func (node *RaftNode) LeaderElection() {
 			}
 			//fmt.Println("candidate ", node.selfID, " gets response: ", reply);
 			if (reply.ResultVote){
-				fmt.Print("node votes yes")
+				//fmt.Print("node votes yes")
 				node.voteCount += 1
 			}else{
 				if (reply.Term > updateTerm){
@@ -131,16 +158,17 @@ func (node *RaftNode) LeaderElection() {
 	}
 	waitgroup.Wait()
 
-	//update node term, updateTerm will be node.currentTerm unless node.currentTerm is out of date
-	node.currentTerm = updateTerm
 
-	//fmt.Println("float: ",float64(node.voteCount)/float64(NUM_NODES))
 	if (float64(node.voteCount)/float64(NUM_NODES) > 0.5){
 		fmt.Println("confirmed leader");
+		node.status = "leader"
+		Heartbeat(node)
 	}else{
-		//fmt.Println("node status: ", node.status);
 		node.status = "follower"
-		node.currentTerm = reply.currentTerm 
+		node.voteCount = 0
+
+		//update node term, updateTerm will be node.currentTerm unless node.currentTerm is out of date
+		node.currentTerm = updateTerm
 	}
 
 
@@ -156,9 +184,48 @@ test with failures by making noes go to sleep randomly
 
 /*call RequestVote, calcualte the return values to see if majority or true*/
 
+// question: why is every node voting for multiple people???
+
 // You may use this function to help with handling the periodic heartbeats
 // Hint: Use this only if the node is a leader
-func Heartbeat() {
+func Heartbeat(node *RaftNode) {
+	fmt.Println("heartbeat called")
+
+		//start a heartbeat timer
+		node.electionTimeout = time.NewTimer(10 * time.Millisecond)
+
+	go func() {
+		//thread for each node checking for timeout
+		<-node.electionTimeout.C
+
+		// Printed when timer is fired
+		//fmt.Println("heartbeat timer fired send heartbeat")
+
+		//send heartbeat via appendentries
+		arguments := AppendEntryArgument{
+			Term: node.currentTerm,
+			LeaderID: node.selfID,
+		}
+		var waitgroup sync.WaitGroup
+		for _, peerNode := range node.peerConnections {
+			waitgroup.Add(1)
+			go func(server ServerConnection) {
+				defer waitgroup.Done()
+				var reply AppendEntryReply
+				err := server.rpcConnection.Call("RaftNode.AppendEntry", arguments, &reply)
+				if err != nil {
+					return
+				}	
+				//fmt.Print("reply from append entry: ", reply);
+			}(peerNode)
+		}
+		waitgroup.Wait()
+		
+		//start a heartbeat timer
+		node.electionTimeout = time.NewTimer(10 * time.Millisecond)
+	}()
+
+
 }
 
 // will initiate a timer for the node passed to it
@@ -175,7 +242,7 @@ func StartTimer(node *RaftNode) {
 // This function should be called whenever an event occurs that prevents the need for a new election,
 // such as receiving a heartbeat from the leader or granting a vote to a candidate.
 func (node *RaftNode) resetElectionTimeout() {
-	fmt.Println("node ", node, " reset its timer")
+	fmt.Println("node ", node.selfID, " reset its timer")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	duration := time.Duration(r.Intn(150)+151) * time.Millisecond
 	node.electionTimeout.Stop()          // Use Reset method only on stopped or expired timers
@@ -289,7 +356,6 @@ func main() {
 	// Heads up: they never will be done!
 	// Hint 4: wg.Wait() might be helpful here
 
-	fmt.Println("node: ", node)
 
 	StartTimer(node)
 
