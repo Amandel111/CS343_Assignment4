@@ -67,12 +67,11 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
 
-	//fmt.Println(node.selfID, "recieved a vote request")
+	fmt.Println(node.selfID, "recieved a vote request from", arguments.CandidateID, "\n")
 	node.resetElectionTimeout() //do we do this before or after we compare terms
-	// question: ask about nil vs. candidate id in the if statement- when would it be candidate id?
-	// question: how to do a check for null?
-	if (arguments.Term >= node.currentTerm /*&& &node.votedFor == nil*/){ //reset votedFor at beginning of terms
+	if (arguments.Term >= node.currentTerm && node.votedFor == -1 ){ //reset votedFor at beginning of terms
 		//candidate has valid term numver, approve vote
+		fmt.Println("node votes for a candidate other than itself\n");
 		reply.ResultVote = true
 		node.votedFor = arguments.CandidateID
 
@@ -87,6 +86,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 
 
 	fmt.Println("node ", node.selfID, " votes for node ", node.votedFor)
+	fmt.Println("node ", node.selfID, " votes for node ", arguments.CandidateID)
 	return nil
 }
 
@@ -96,7 +96,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryReply) error {
 	//check if currently a candidate, if so and if you just received a valid heartbeat, return to follower state
 	
-	//fmt.Println("append entries has been called");
+	fmt.Println("append entries has been called, reset timer for node ", node.selfID, "\n");
 
 	//determine what needs to be done before and after we call timer, this position is temporary
 	node.resetElectionTimeout() //do we do this before or after we compare terms
@@ -134,7 +134,7 @@ func (node *RaftNode) LeaderElection() {
 	updateTerm := node.currentTerm
 	//fmt.Println("peer connections ", node.peerConnections, " for node ", node.selfID)
 	for _, peerNode := range node.peerConnections {
-		//fmt.Println("requesting from node", peerNode)
+		fmt.Println("requesting from node", peerNode)
 		waitgroup.Add(1)
 		go func(server ServerConnection) {
 			defer waitgroup.Done()
@@ -143,7 +143,7 @@ func (node *RaftNode) LeaderElection() {
 			if err != nil {
 				return
 			}else{
-				//retry
+				//retrys
 			}
 			//fmt.Println("candidate ", node.selfID, " gets response: ", reply);
 			if (reply.ResultVote){
@@ -174,12 +174,14 @@ func (node *RaftNode) LeaderElection() {
 
 }
 
-/*
+/* TODO:
 leaderElection: once a candidate is turned into a leader, change its status. create a heartbeat timer, send heartbeats
 request vote: compare terms, update voting node term, return 
 heartbeat: figure out what to do with this, create a heartbeat timer
+reset votedFor
 append entries: call these for heartbeats. If a candidate receives one, turn it into a follower. Reset timer for all nodes.
 test with failures by making noes go to sleep randomly
+if status is candidate and receives an appendEntry, revert to follower
 */
 
 /*call RequestVote, calcualte the return values to see if majority or true*/
@@ -195,35 +197,37 @@ func Heartbeat(node *RaftNode) {
 		node.electionTimeout = time.NewTimer(10 * time.Millisecond)
 
 	go func() {
-		//thread for each node checking for timeout
-		<-node.electionTimeout.C
+		for {
+			//thread for each node checking for timeout
+			<-node.electionTimeout.C
 
-		// Printed when timer is fired
-		//fmt.Println("heartbeat timer fired send heartbeat")
+			// Printed when timer is fired
+			//fmt.Println("heartbeat timer fired send heartbeat")
 
-		//send heartbeat via appendentries
-		arguments := AppendEntryArgument{
-			Term: node.currentTerm,
-			LeaderID: node.selfID,
+			//send heartbeat via appendentries
+			arguments := AppendEntryArgument{
+				Term: node.currentTerm,
+				LeaderID: node.selfID,
+			}
+			var waitgroup sync.WaitGroup
+			for _, peerNode := range node.peerConnections {
+				waitgroup.Add(1)
+				/*go*/ func(server ServerConnection) {
+					defer waitgroup.Done()
+					var reply AppendEntryReply
+					err := server.rpcConnection.Call("RaftNode.AppendEntry", arguments, &reply)
+					if err != nil {
+						return
+					}	
+					//fmt.Print("reply from append entry: ", reply);
+				}(peerNode)
+			}
+			waitgroup.Wait()
+			
+			//start a heartbeat timer
+			node.electionTimeout = time.NewTimer(10 * time.Millisecond)
 		}
-		var waitgroup sync.WaitGroup
-		for _, peerNode := range node.peerConnections {
-			waitgroup.Add(1)
-			go func(server ServerConnection) {
-				defer waitgroup.Done()
-				var reply AppendEntryReply
-				err := server.rpcConnection.Call("RaftNode.AppendEntry", arguments, &reply)
-				if err != nil {
-					return
-				}	
-				//fmt.Print("reply from append entry: ", reply);
-			}(peerNode)
-		}
-		waitgroup.Wait()
-		
-		//start a heartbeat timer
-		node.electionTimeout = time.NewTimer(10 * time.Millisecond)
-	}()
+		}()
 
 
 }
@@ -274,6 +278,7 @@ func main() {
 		mutex:       sync.Mutex{},
 		currentTerm: 0,
 		status:      "follower",
+		votedFor: -1,
 	}
 
 	myPort := "localhost"
