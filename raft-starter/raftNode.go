@@ -74,6 +74,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 		fmt.Println("node votes for a candidate other than itself\n");
 		reply.ResultVote = true
 		node.votedFor = arguments.CandidateID
+		fmt.Println("node ", node.selfID, " votes for node ", node.votedFor)
 
 	}else{ //ask christine if less than or equal to or just less than
 		//candidate has equal to or smaller term number, invalid
@@ -83,10 +84,6 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 	//increment node term
 	node.currentTerm += 1
 	reply.Term = node.currentTerm
-
-
-	fmt.Println("node ", node.selfID, " votes for node ", node.votedFor)
-	fmt.Println("node ", node.selfID, " votes for node ", arguments.CandidateID)
 	return nil
 }
 
@@ -97,16 +94,27 @@ func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEn
 	//check if currently a candidate, if so and if you just received a valid heartbeat, return to follower state
 	
 	fmt.Println("append entries has been called, reset timer for node ", node.selfID, "\n");
+	node.resetElectionTimeout() //do we do this before or after we compare term
 
-	//determine what needs to be done before and after we call timer, this position is temporary
-	node.resetElectionTimeout() //do we do this before or after we compare terms
+	//receive heartbeat from true leader
+	if (arguments.Term >= node.currentTerm){
+		fmt.Println("received append entry from valid leader")
+
+		//reset who node has voted for because if receiving heartbeat, not in an election, this should be null
+		node.votedFor = -1
+		reply.Success = true
+		if (node.status == "leader" ){
+			//revert to follower, increment term
+			node.status = "follower"
+			node.currentTerm = arguments.Term
+		}
+	}else{
+		//received an appendEntry from an old leader
+		reply.Success = false
+	}
 	reply.Term = node.currentTerm
-	//change success to be false if leader term < node.currentTerm
-	reply.Success = true
 	return nil
 
-
-	//if receive rpc from higher term, turn into follower, increment term
 }
 
 // You may use this function to help with handling the election time out
@@ -139,11 +147,10 @@ func (node *RaftNode) LeaderElection() {
 		go func(server ServerConnection) {
 			defer waitgroup.Done()
 			var reply VoteReply
+			//var err string
 			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
-			if err != nil {
-				return
-			}else{
-				//retrys
+			for err != nil {
+				err = server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
 			}
 			//fmt.Println("candidate ", node.selfID, " gets response: ", reply);
 			if (reply.ResultVote){
@@ -158,35 +165,26 @@ func (node *RaftNode) LeaderElection() {
 	}
 	waitgroup.Wait()
 
-
+	fmt.Println("candidate ", node.selfID, " got ", node.voteCount, " votes\n");
 	if (float64(node.voteCount)/float64(NUM_NODES) > 0.5){
 		fmt.Println("confirmed leader");
 		node.status = "leader"
 		Heartbeat(node)
 	}else{
 		node.status = "follower"
-		node.voteCount = 0
 
 		//update node term, updateTerm will be node.currentTerm unless node.currentTerm is out of date
 		node.currentTerm = updateTerm
 	}
-
+	node.voteCount = 0
 
 }
 
 /* TODO:
-leaderElection: once a candidate is turned into a leader, change its status. create a heartbeat timer, send heartbeats
-request vote: compare terms, update voting node term, return 
-heartbeat: figure out what to do with this, create a heartbeat timer
 reset votedFor
-append entries: call these for heartbeats. If a candidate receives one, turn it into a follower. Reset timer for all nodes.
 test with failures by making noes go to sleep randomly
-if status is candidate and receives an appendEntry, revert to follower
 */
 
-/*call RequestVote, calcualte the return values to see if majority or true*/
-
-// question: why is every node voting for multiple people???
 
 // You may use this function to help with handling the periodic heartbeats
 // Hint: Use this only if the node is a leader
@@ -209,20 +207,26 @@ func Heartbeat(node *RaftNode) {
 				Term: node.currentTerm,
 				LeaderID: node.selfID,
 			}
-			var waitgroup sync.WaitGroup
+			//var waitgroup sync.WaitGroup
 			for _, peerNode := range node.peerConnections {
-				waitgroup.Add(1)
+				//waitgroup.Add(1)
 				/*go*/ func(server ServerConnection) {
-					defer waitgroup.Done()
+					//defer waitgroup.Done()
 					var reply AppendEntryReply
 					err := server.rpcConnection.Call("RaftNode.AppendEntry", arguments, &reply)
 					if err != nil {
-						return
+						//return
+					}
+					if (!reply.Success){
+						//update old leader's term
+						node.currentTerm = reply.Term
+						node.status = "follower"
+						return 
 					}	
 					//fmt.Print("reply from append entry: ", reply);
 				}(peerNode)
 			}
-			waitgroup.Wait()
+			//waitgroup.Wait()
 			
 			//start a heartbeat timer
 			node.electionTimeout = time.NewTimer(10 * time.Millisecond)
