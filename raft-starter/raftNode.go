@@ -58,25 +58,26 @@ var serverNodes []ServerConnection
 var currentTerm int
 var votedFor int
 var electionTimeout *time.Timer
+
 const NUM_NODES = 5
 
 // The RequestVote RPC as defined in Raft
 // Hint 1: Use the description in Figure 2 of the paper
-//Hint 2: Only focus on the details related to leader election and majority votes
+// Hint 2: Only focus on the details related to leader election and majority votes
 func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
 
-	fmt.Println(node.selfID, "recieved a vote request from", arguments.CandidateID, "\n")
-	node.resetElectionTimeout() //do we do this before or after we compare terms
-	if (arguments.Term >= node.currentTerm && node.votedFor == -1 ){ //reset votedFor at beginning of terms
+	fmt.Println(node.selfID, "recieved a vote request from", arguments.CandidateID)
+	node.resetElectionTimeout()                                    //do we do this before or after we compare terms
+	if arguments.Term >= node.currentTerm && node.votedFor == -1 { //reset votedFor at beginning of terms
 		//candidate has valid term numver, approve vote
-		fmt.Println("node votes for a candidate other than itself\n");
+		fmt.Println("node votes for a candidate other than itself")
 		reply.ResultVote = true
 		node.votedFor = arguments.CandidateID
 		fmt.Println("node ", node.selfID, " votes for node ", node.votedFor)
 
-	}else{ //ask christine if less than or equal to or just less than
+	} else { //ask christine if less than or equal to or just less than
 		//candidate has equal to or smaller term number, invalid
 		reply.ResultVote = false
 	}
@@ -92,23 +93,23 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 // Hint 2: Only focus on the details related to leader election and heartbeats
 func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryReply) error {
 	//check if currently a candidate, if so and if you just received a valid heartbeat, return to follower state
-	
-	fmt.Println("append entries has been called, reset timer for node ", node.selfID, "\n");
+
+	fmt.Println("append entries has been called, reset timer for node ", node.selfID)
 	node.resetElectionTimeout() //do we do this before or after we compare term
 
 	//receive heartbeat from true leader
-	if (arguments.Term >= node.currentTerm){
+	if arguments.Term >= node.currentTerm {
 		fmt.Println("received append entry from valid leader")
 
 		//reset who node has voted for because if receiving heartbeat, not in an election, this should be null
 		node.votedFor = -1
 		reply.Success = true
-		if (node.status == "leader" ){
+		if node.status == "leader" {
 			//revert to follower, increment term
 			node.status = "follower"
 			node.currentTerm = arguments.Term
 		}
-	}else{
+	} else {
 		//received an appendEntry from an old leader
 		reply.Success = false
 	}
@@ -124,7 +125,7 @@ func (node *RaftNode) LeaderElection() {
 	//increment current term and status
 	node.currentTerm += 1
 	node.status = "candidate"
-	
+
 	// vote for itself
 	node.voteCount += 1
 	node.votedFor = node.selfID
@@ -153,11 +154,11 @@ func (node *RaftNode) LeaderElection() {
 				err = server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
 			}
 			//fmt.Println("candidate ", node.selfID, " gets response: ", reply);
-			if (reply.ResultVote){
+			if reply.ResultVote {
 				//fmt.Print("node votes yes")
 				node.voteCount += 1
-			}else{
-				if (reply.Term > updateTerm){
+			} else {
+				if reply.Term > updateTerm {
 					updateTerm = reply.Term
 				}
 			}
@@ -165,12 +166,12 @@ func (node *RaftNode) LeaderElection() {
 	}
 	waitgroup.Wait()
 
-	fmt.Println("candidate ", node.selfID, " got ", node.voteCount, " votes\n");
-	if (float64(node.voteCount)/float64(NUM_NODES) > 0.5){
-		fmt.Println("confirmed leader");
+	fmt.Println("candidate ", node.selfID, " got ", node.voteCount, " votes")
+	if float64(node.voteCount)/float64(NUM_NODES) > 0.5 {
+		fmt.Println("confirmed leader")
 		node.status = "leader"
 		Heartbeat(node)
-	}else{
+	} else {
 		node.status = "follower"
 
 		//update node term, updateTerm will be node.currentTerm unless node.currentTerm is out of date
@@ -185,14 +186,13 @@ reset votedFor
 test with failures by making noes go to sleep randomly
 */
 
-
 // You may use this function to help with handling the periodic heartbeats
 // Hint: Use this only if the node is a leader
 func Heartbeat(node *RaftNode) {
 	fmt.Println("heartbeat called")
 
-		//start a heartbeat timer
-		node.electionTimeout = time.NewTimer(10 * time.Millisecond)
+	//start a heartbeat timer
+	node.electionTimeout = time.NewTimer(10 * time.Millisecond)
 
 	go func() {
 		for {
@@ -204,35 +204,35 @@ func Heartbeat(node *RaftNode) {
 
 			//send heartbeat via appendentries
 			arguments := AppendEntryArgument{
-				Term: node.currentTerm,
+				Term:     node.currentTerm,
 				LeaderID: node.selfID,
 			}
 			//var waitgroup sync.WaitGroup
 			for _, peerNode := range node.peerConnections {
 				//waitgroup.Add(1)
-				/*go*/ func(server ServerConnection) {
+				/*go*/
+				func(server ServerConnection) {
 					//defer waitgroup.Done()
 					var reply AppendEntryReply
 					err := server.rpcConnection.Call("RaftNode.AppendEntry", arguments, &reply)
 					if err != nil {
 						//return
 					}
-					if (!reply.Success){
+					if !reply.Success {
 						//update old leader's term
 						node.currentTerm = reply.Term
 						node.status = "follower"
-						return 
-					}	
+						return
+					}
 					//fmt.Print("reply from append entry: ", reply);
 				}(peerNode)
 			}
 			//waitgroup.Wait()
-			
+
 			//start a heartbeat timer
 			node.electionTimeout = time.NewTimer(10 * time.Millisecond)
 		}
-		}()
-
+	}()
 
 }
 
@@ -282,7 +282,7 @@ func main() {
 		mutex:       sync.Mutex{},
 		currentTerm: 0,
 		status:      "follower",
-		votedFor: -1,
+		votedFor:    -1,
 	}
 
 	myPort := "localhost"
@@ -365,7 +365,6 @@ func main() {
 	// Heads up: they never will be done!
 	// Hint 4: wg.Wait() might be helpful here
 
-
 	StartTimer(node)
 
 	go func() {
@@ -376,7 +375,7 @@ func main() {
 		fmt.Println("timer inactivated for node", node.selfID)
 
 		//if node reaches this point, it starts an election because it has not received a heartbeat
-	    node.LeaderElection()
+		node.LeaderElection()
 	}()
 
 	var wg sync.WaitGroup
