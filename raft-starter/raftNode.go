@@ -70,11 +70,11 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 
 	fmt.Println(node.selfID, "recieved a vote request from", arguments.CandidateID)
 	//node.resetElectionTimeout()                                    //do we do this before or after we compare terms
-	if arguments.Term > node.currentTerm /*&& node.votedFor == -1 */{ //reset votedFor at beginning of  //=> //do we get rid of node.votedFor?
-		node.resetElectionTimeout() 
-
+	if arguments.Term > node.currentTerm && node.votedFor == -1 { //reset votedFor at beginning of  //=> //do we get rid of node.votedFor?
+		node.resetElectionTimeout()
+		// QUESTION: how can a node vote for 2 candidates (if the higher term one is the second candidate)
 		//step down
-		node.votedFor = -1
+		//node.votedFor = -1
 
 		//candidate has valid term numver, approve vote
 		fmt.Println("node votes for a candidate other than itself")
@@ -108,7 +108,7 @@ func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEn
 		node.resetElectionTimeout() //do we do this before or after we compare term
 
 		//reset who node has voted for because if receiving heartbeat, not in an election, this should be null
-		//node.votedFor = -1
+		node.votedFor = -1
 
 		//step down
 		node.currentTerm = arguments.Term
@@ -161,7 +161,7 @@ func (node *RaftNode) LeaderElection() {
 			//var err string
 			//var connectionError = "connection is shut down"
 			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
-			if err != nil{
+			if err != nil {
 				//nothing happens, failed
 			}
 			//var currErr = err.Error()
@@ -184,7 +184,7 @@ func (node *RaftNode) LeaderElection() {
 		}(peerNode)
 	}
 	waitgroup.Wait()
-
+	// move this up?? NOTE to fix
 	fmt.Println("candidate ", node.selfID, " got ", node.voteCount, " votes")
 	if float64(node.voteCount)/float64(NUM_NODES) > 0.5 {
 		fmt.Println("confirmed leader")
@@ -192,7 +192,7 @@ func (node *RaftNode) LeaderElection() {
 		Heartbeat(node)
 	} else {
 		node.status = "follower"
-
+		fmt.Println("not enough votes- restart election again")
 		//update node term, updateTerm will be node.currentTerm unless node.currentTerm is out of date
 		node.currentTerm = updateTerm
 	}
@@ -239,7 +239,7 @@ func Heartbeat(node *RaftNode) {
 					}
 					if !reply.Success {
 						//update old leader's term
-						node.currentTerm = reply.Term 
+						node.currentTerm = reply.Term
 						node.status = "follower"
 						return
 					}
