@@ -149,7 +149,13 @@ func (node *RaftNode) LeaderElection() {
 			defer waitgroup.Done()
 			var reply VoteReply
 			//var err string
+			//var connectionError = "connection is shut down"
 			err := server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
+			//var currErr = err.Error()
+			//if connectionError == currErr {
+			// 	fmt.Println("true")
+			// 	return
+			// }
 			for err != nil {
 				err = server.rpcConnection.Call("RaftNode.RequestVote", arguments, &reply)
 			}
