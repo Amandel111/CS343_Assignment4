@@ -70,11 +70,13 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 
 	fmt.Println(node.selfID, "recieved a vote request from", arguments.CandidateID)
 	//node.resetElectionTimeout()                                    //do we do this before or after we compare terms
-	if arguments.Term > node.currentTerm && node.votedFor == -1 { //reset votedFor at beginning of  //=> //do we get rid of node.votedFor?
+	if arguments.Term > node.currentTerm || (arguments.Term == node.currentTerm && node.votedFor == -1) {// && node.votedFor == -1 { //reset votedFor at beginning of  //=> //do we get rid of node.votedFor?
 		node.resetElectionTimeout()
 		// QUESTION: how can a node vote for 2 candidates (if the higher term one is the second candidate)
 		//step down
 		//node.votedFor = -1
+		//increment node term
+		node.currentTerm = arguments.Term
 
 		//candidate has valid term numver, approve vote
 		fmt.Println("node votes for a candidate other than itself")
@@ -82,13 +84,11 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 		node.votedFor = arguments.CandidateID
 		fmt.Println("node ", node.selfID, " votes for node ", node.votedFor)
 
-	} else { //ask christine if less than or equal to or just less than
+	}else { //ask christine if less than or equal to or just less than
 		//candidate has equal to or smaller term number, invalid
 		reply.ResultVote = false
 	}
 
-	//increment node term
-	node.currentTerm += 1
 	reply.Term = node.currentTerm
 
 	return nil
@@ -100,20 +100,22 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEntryReply) error {
 	//check if currently a candidate, if so and if you just received a valid heartbeat, return to follower state
 
-	fmt.Println("append entries has been called, reset timer for node ", node.selfID)
+	//fmt.Println("append entries has been called, reset timer for node ", node.selfID)
 	//receive heartbeat from true leader
 
-	if arguments.Term >= node.currentTerm { //=
-		fmt.Println("received append entry from valid leader")
+	if arguments.Term >= node.currentTerm { //figure 2 says false if term < currentTerm
+		fmt.Println("received append entry from valid leader ", arguments.LeaderID, "term ", arguments.Term)
 		node.resetElectionTimeout() //do we do this before or after we compare term
 
 		//reset who node has voted for because if receiving heartbeat, not in an election, this should be null
-		node.votedFor = -1
+		//node.votedFor = -1
 
 		//step down
 		node.currentTerm = arguments.Term
 		reply.Success = true
-		node.status = "leader"
+		//node.status = "leader"
+		node.status = "follower"
+		node.votedFor = -1
 		/*if node.status == "leader" {
 			//revert to follower, increment term
 			node.status = "follower"
@@ -123,6 +125,7 @@ func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEn
 		//received an appendEntry from an old leader
 		reply.Success = false
 	}
+
 	reply.Term = node.currentTerm
 	return nil
 
@@ -191,6 +194,7 @@ func (node *RaftNode) LeaderElection() {
 		node.status = "leader"
 		Heartbeat(node)
 	} else {
+		node.votedFor = -1
 		node.status = "follower"
 		fmt.Println("not enough votes- restart election again")
 		//update node term, updateTerm will be node.currentTerm unless node.currentTerm is out of date
@@ -239,6 +243,7 @@ func Heartbeat(node *RaftNode) {
 					}
 					if !reply.Success {
 						//update old leader's term
+						node.votedFor = -1
 						node.currentTerm = reply.Term
 						node.status = "follower"
 						return
