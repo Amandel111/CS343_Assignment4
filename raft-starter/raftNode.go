@@ -70,8 +70,8 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 
 	fmt.Println(node.selfID, "recieved a vote request from", arguments.CandidateID)
 	//node.resetElectionTimeout()                                    //do we do this before or after we compare terms
-	if arguments.Term > node.currentTerm {//|| (arguments.Term == node.currentTerm && node.votedFor == -1) {// && node.votedFor == -1 { //reset votedFor at beginning of  //=> //do we get rid of node.votedFor?
-		fmt.Println("candidate has greater term, vote for candidate")
+	if arguments.Term > node.currentTerm { //|| (arguments.Term == node.currentTerm && node.votedFor == -1) {// && node.votedFor == -1 { //reset votedFor at beginning of  //=> //do we get rid of node.votedFor?
+		fmt.Println("candidate has greater term, vote for candidate", arguments.CandidateID)
 		node.resetElectionTimeout()
 		// QUESTION: how can a node vote for 2 candidates (if the higher term one is the second candidate)
 		//step down
@@ -86,8 +86,8 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 		reply.ResultVote = true
 		fmt.Println("node ", node.selfID, " votes for node ", node.votedFor)
 
-	}else if (arguments.Term == node.currentTerm && node.votedFor == -1){
-		fmt.Println("terms equal, node ", node.selfID, " vote for candidate ", arguments.CandidateID);
+	} else if arguments.Term == node.currentTerm && node.votedFor == -1 {
+		fmt.Println("terms equal, node ", node.selfID, " vote for candidate ", arguments.CandidateID)
 		node.resetElectionTimeout()
 		node.currentTerm = arguments.Term
 		node.status = "follower"
@@ -95,7 +95,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 		fmt.Println("node votes for a candidate other than itself")
 		node.votedFor = arguments.CandidateID
 		reply.ResultVote = true
-	}else { //ask christine if less than or equal to or just less than
+	} else { //ask christine if less than or equal to or just less than
 		//candidate has equal to or smaller term number, invalid
 		reply.ResultVote = false
 	}
@@ -113,7 +113,8 @@ func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEn
 
 	//fmt.Println("append entries has been called, reset timer for node ", node.selfID)
 	//receive heartbeat from true leader
-
+	// node.mutex.Lock()
+	// defer node.mutex.Unlock()
 	if arguments.Term > node.currentTerm { //figure 2 says false if term < currentTerm
 		fmt.Println("received append entry from leader from higher term node", arguments.LeaderID, "term ", arguments.Term)
 		node.resetElectionTimeout() //do we do this before or after we compare term
@@ -132,9 +133,9 @@ func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEn
 			node.status = "follower"
 			node.currentTerm = arguments.Term
 		}*/
-	}else if arguments.Term == node.currentTerm {
+	} else if arguments.Term == node.currentTerm {
 		fmt.Println("received append entry from leader from equal term ", arguments.LeaderID, "term ", arguments.Term)
-		node.resetElectionTimeout() 
+		node.resetElectionTimeout()
 		reply.Success = true
 	} else { //=< ?
 		//received an appendEntry from an old leader
@@ -259,7 +260,7 @@ func Heartbeat(node *RaftNode) {
 					if !reply.Success {
 						//update old leader's term
 						node.votedFor = -1
-						if (node.currentTerm < reply.Term){
+						if node.currentTerm < reply.Term {
 							node.currentTerm = reply.Term
 						}
 						node.status = "follower"
@@ -291,11 +292,19 @@ func StartTimer(node *RaftNode) {
 // This function should be called whenever an event occurs that prevents the need for a new election,
 // such as receiving a heartbeat from the leader or granting a vote to a candidate.
 func (node *RaftNode) resetElectionTimeout() {
+	// node.mutex.Lock()
+	// defer node.mutex.Unlock()
+
 	fmt.Println("node ", node.selfID, " reset its timer")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	fmt.Println("created new")
 	duration := time.Duration(r.Intn(150)+151) * time.Millisecond
-	node.electionTimeout.Stop()          // Use Reset method only on stopped or expired timers
+	fmt.Println("random duration")
+	node.electionTimeout.Stop() // Use Reset method only on stopped or expired timers
+	fmt.Println("timeout stop")
 	node.electionTimeout.Reset(duration) // Resets the timer to new random value
+	// NOTE SEGMENTATION FAULT COMING FROM TIMER
+	fmt.Println("finished reseting election timeout")
 }
 
 func main() {
