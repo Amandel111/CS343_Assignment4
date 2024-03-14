@@ -77,7 +77,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 		//step down
 		//node.votedFor = -1
 		//increment node term
-		node.currentTerm = arguments.Term
+		//node.currentTerm = arguments.Term
 
 		//candidate has valid term numver, approve vote
 		node.votedFor = arguments.CandidateID
@@ -89,7 +89,7 @@ func (node *RaftNode) RequestVote(arguments VoteArguments, reply *VoteReply) err
 	} else if arguments.Term == node.currentTerm && node.votedFor == -1 {
 		fmt.Println("terms equal, node ", node.selfID, " vote for candidate ", arguments.CandidateID)
 		node.resetElectionTimeout()
-		node.currentTerm = arguments.Term
+		//node.currentTerm = arguments.Term
 		node.status = "follower"
 		//candidate has valid term numver, approve vote
 		fmt.Println("node votes for a candidate other than itself")
@@ -116,7 +116,7 @@ func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEn
 	// node.mutex.Lock()
 	// defer node.mutex.Unlock()
 	if arguments.Term > node.currentTerm { //figure 2 says false if term < currentTerm
-		fmt.Println("received append entry from leader from higher term node", arguments.LeaderID, "term ", arguments.Term)
+		//fmt.Println("received append entry from leader from higher term node", arguments.LeaderID, "term ", arguments.Term)
 		node.resetElectionTimeout() //do we do this before or after we compare term
 
 		//reset who node has voted for because if receiving heartbeat, not in an election, this should be null
@@ -134,7 +134,7 @@ func (node *RaftNode) AppendEntry(arguments AppendEntryArgument, reply *AppendEn
 			node.currentTerm = arguments.Term
 		}*/
 	} else if arguments.Term == node.currentTerm {
-		fmt.Println("received append entry from leader from equal term ", arguments.LeaderID, "term ", arguments.Term)
+		//fmt.Println("received append entry from leader from equal node ", arguments.LeaderID, "term ", arguments.Term)
 		node.resetElectionTimeout()
 		reply.Success = true
 	} else { //=< ?
@@ -231,15 +231,18 @@ func Heartbeat(node *RaftNode) {
 	fmt.Println("heartbeat called")
 
 	//start a heartbeat timer
-	node.electionTimeout = time.NewTimer(10 * time.Millisecond)
+	//node.electionTimeout = time.NewTimer(10 * time.Millisecond)
 
 	go func() {
+		var counter = 0
 		for {
+			node.electionTimeout = time.NewTimer(10 * time.Millisecond)
+			counter += 1
 			//thread for each node checking for timeout
 			<-node.electionTimeout.C
 
 			// Printed when timer is fired
-			//fmt.Println("heartbeat timer fired send heartbeat")
+			fmt.Println("heartbeat timer fired send heartbeat", node.selfID, counter)
 
 			//send heartbeat via appendentries
 			arguments := AppendEntryArgument{
@@ -256,15 +259,18 @@ func Heartbeat(node *RaftNode) {
 					err := server.rpcConnection.Call("RaftNode.AppendEntry", arguments, &reply)
 					if err != nil {
 						//return
-					}
-					if !reply.Success {
-						//update old leader's term
-						node.votedFor = -1
-						if node.currentTerm < reply.Term {
-							node.currentTerm = reply.Term
+					} else {
+						if !reply.Success {
+							fmt.Println("reply", reply, "port", peerNode)
+							//update old leader's term
+							node.votedFor = -1
+							if node.currentTerm < reply.Term {
+								node.currentTerm = reply.Term
+							}
+							node.status = "follower"
+							fmt.Println("step down", node.selfID)
+							return
 						}
-						node.status = "follower"
-						return
 					}
 					//fmt.Print("reply from append entry: ", reply);
 				}(peerNode)
@@ -272,7 +278,13 @@ func Heartbeat(node *RaftNode) {
 			//waitgroup.Wait()
 
 			//start a heartbeat timer
-			node.electionTimeout = time.NewTimer(10 * time.Millisecond)
+			//node.electionTimeout = time.NewTimer(10 * time.Millisecond)
+			// UNCOMMENT THE IF STATEMENT TO TEST NODE SLEEP AND COMING BACK
+			// if counter == 20 {
+			// 	fmt.Println("sleep started", node.selfID)
+			// 	time.Sleep(10 * time.Second)
+			// 	fmt.Println("woke up")
+			// }
 		}
 	}()
 
@@ -295,16 +307,16 @@ func (node *RaftNode) resetElectionTimeout() {
 	// node.mutex.Lock()
 	// defer node.mutex.Unlock()
 
-	fmt.Println("node ", node.selfID, " reset its timer")
+	//fmt.Println("node ", node.selfID, " reset its timer")
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	fmt.Println("created new")
+	//fmt.Println("created new")
 	duration := time.Duration(r.Intn(150)+151) * time.Millisecond
-	fmt.Println("random duration")
+	//fmt.Println("random duration")
 	node.electionTimeout.Stop() // Use Reset method only on stopped or expired timers
-	fmt.Println("timeout stop")
+	//fmt.Println("timeout stop")
 	node.electionTimeout.Reset(duration) // Resets the timer to new random value
 	// NOTE SEGMENTATION FAULT COMING FROM TIMER
-	fmt.Println("finished reseting election timeout")
+	//fmt.Println("finished reseting election timeout")
 }
 
 func main() {
